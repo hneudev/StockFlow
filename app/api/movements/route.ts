@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
 import Movement from "@/models/Movement";
+// Side-effect imports — registran los schemas en Mongoose para que .populate() funcione
+import "@/models/Product";
+import "@/models/Branch";
 import { CreateMovementSchema, QueryMovementSchema } from "@/lib/schemas/movement.schema";
 import { env } from "@/lib/env";
 

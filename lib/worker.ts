@@ -2,6 +2,9 @@ import mongoose from "mongoose";
 import { connectDB } from "@/lib/db";
 import Movement, { IMovement } from "@/models/Movement";
 import Stock from "@/models/Stock";
+// Side-effect imports — registran los schemas en Mongoose para que .populate() funcione
+import "@/models/Product";
+import "@/models/Branch";
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 
