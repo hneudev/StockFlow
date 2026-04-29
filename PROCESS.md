@@ -543,6 +543,106 @@ Con una librería como `zod-to-mongoose` se podrían derivar los schemas Mongoos
 
 ---
 
+## Decisión #6 — Server Component para datos iniciales — elimina cold start vacío
+
+### El problema: cold start con tabla vacía
+
+El dashboard original era un Client Component que iniciaba con estado vacío y cargaba los datos con `fetch` después del montaje. En cold start de Vercel, ese primer request puede tardar 10-20 segundos. Durante ese tiempo el usuario veía una tabla vacía sin ninguna indicación de si el sistema estaba cargando o simplemente no tenía datos.
+
+### Solución: `page.tsx` como Server Component async
+
+El dashboard pasó de Client Component con estado vacío inicial a Server Component async que obtiene datos directamente de MongoDB antes de enviar el HTML al cliente:
+
+```typescript
+// app/(dashboard)/page.tsx — Server Component
+export default async function DashboardPage() {
+  let movements: SerializedMovement[] = [];
+  let stock: SerializedStock[] = [];
+  let branches: SerializedBranch[] = [];
+
+  try {
+    await connectDB();
+    const [movementDocs, stockDocs, branchDocs] = await Promise.all([
+      Movement.find({}).sort({ createdAt: -1 }).limit(20)
+        .populate("productId", "name sku")
+        .populate("fromBranchId", "name")
+        .populate("toBranchId", "name")
+        .lean(),
+      Stock.find({}).populate("productId", "name sku").populate("branchId", "name").lean(),
+      Branch.find({}).lean(),
+    ]);
+    movements = movementDocs.map(serializeMovement);
+    stock     = stockDocs.map(serializeStock);
+    branches  = branchDocs.map(serializeBranch);
+  } catch (error) {
+    console.error("Error cargando datos iniciales:", error);
+  }
+
+  return <DashboardClient initialMovements={movements} initialStock={stock} initialBranches={branches} />;
+}
+```
+
+Con este patrón los datos viajan en el HTML inicial — el usuario ve contenido real desde el primer render.
+
+### Por qué `lib/serializers.ts` es necesario
+
+`ObjectId` y `Date` de Mongoose no son serializables como props Server → Client en Next.js. Next.js serializa los props al cruzar el boundary Server/Client y lanza un error si encuentra valores no serializables. `lib/serializers.ts` convierte cada documento a un objeto plano con strings:
+
+- `_id.toString()` en lugar de `ObjectId`
+- `.toISOString()` en lugar de `Date`
+- Campos anidados del `populate()` también serializados
+
+### Patrón resultante
+
+```text
+page.tsx (Server Component, async)
+  → fetch directo a MongoDB
+  → lib/serializers.ts (ObjectId + Date → string)
+  → props a DashboardClient.tsx (Client Component)
+    → polling cada 5s para actualizaciones
+```
+
+El Client Component recibe los datos ya serializados como `initialMovements`, `initialStock`, `initialBranches` y los usa como estado inicial de `useState`. El polling continúa desde el cliente exactamente como antes — la diferencia es que ya hay datos en pantalla desde el primer render.
+
+### Con más tiempo
+
+React Suspense con streaming permitiría mostrar partes de la página mientras otras cargan: el shell HTML llegaría inmediatamente y cada sección del dashboard haría streaming de su contenido al resolverse. Combinado con `loading.tsx` para el fallback, eliminaría completamente el estado vacío sin bloquear el primer byte de HTML.
+
+---
+
+## Decisión #7 — Imports explícitos de modelos — requisito de `serverComponentsExternalPackages`
+
+### El problema: `MissingSchemaError` en populate
+
+Con `serverComponentsExternalPackages: ["mongoose"]` en `next.config.mjs`, webpack crea bundles separados para Server Components y para API Routes. Cada bundle tiene su propia instancia del módulo mongoose. Si un route handler hace `.populate("productId")` pero el modelo `Product` nunca fue importado en ese bundle, Mongoose lanza `MissingSchemaError` porque ese modelo no está registrado en esa instancia.
+
+El síntoma era confuso: el dashboard (Server Component) funcionaba correctamente porque importaba los modelos directamente, pero las mismas rutas API devolvían 500 cuando eran llamadas desde el cliente.
+
+### Solución: imports con side-effects en cada archivo que usa populate
+
+La convención de JavaScript/TypeScript permite importar un módulo únicamente por sus efectos secundarios, sin usar ningún export:
+
+```typescript
+// app/api/movements/route.ts — registra los schemas en la instancia de Mongoose del bundle
+import "@/models/Product";
+import "@/models/Branch";
+```
+
+Este import ejecuta el módulo (que llama a `mongoose.model("Product", productSchema)`), registrando el schema en la instancia de Mongoose de ese bundle, sin exponer nada al espacio de nombres del archivo.
+
+### Archivos afectados
+
+- `app/api/movements/route.ts` — populate de `productId`, `fromBranchId`, `toBranchId`
+- `app/api/stock/route.ts` — populate de `productId`, `branchId`
+- `app/api/worker/process/route.ts` — usa `lib/worker.ts` que hace populate indirectamente
+- `lib/worker.ts` — populate en stale recovery y en resolución del movimiento
+
+### Por qué `serverComponentsExternalPackages` es necesario
+
+Sin esta configuración, webpack puede incluir múltiples copias de mongoose en distintos chunks. Cuando dos chunks intentan usar mongoose, cada uno tiene su propia instancia: la del Server Component se conecta a MongoDB, pero la de las API Routes no, porque la conexión establecida en un módulo no se comparte con otro. `serverComponentsExternalPackages` fuerza resolución nativa de Node.js para mongoose, garantizando una única instancia compartida en toda la aplicación.
+
+---
+
 ## Observabilidad
 
 El worker emite logs estructurados en JSON en cada paso crítico. En Vercel, estos aparecen en la pestaña **Logs** del proyecto y se pueden filtrar por `movementId`.
@@ -647,17 +747,20 @@ Todos los eventos de un mismo movimiento comparten el mismo `movementId`. La sec
 | shadcn/ui             | Componentes UI — `Badge`, `Table`, `Select` para el dashboard                                                                                                                                                                             |
 | Thunder Client        | Testing manual de API durante el desarrollo del backend                                                                                                                                                                                   |
 | GitHub                | Control de versiones — commits atómicos y planeados                                                                                                                                                                                       |
+| `scripts/seed.ts`     | Script de seed idempotente — puebla la DB con 3 productos, 3 sucursales, 9 entradas de stock y 10 movimientos en distintos estados para explorar el dashboard sin configuración manual                                                    |
 
 **Sobre testing:** Se eligió no hacer TDD dado el tiempo disponible y la velocidad con que el schema evolucionó en las primeras horas. Los tests se escribieron en `feat/tests` después de que el worker estuvo estable, usando Vitest con mocks de Mongoose — sin conexión a MongoDB real.
 
 Los 7 tests cubren dos grupos:
 
 `processNextMovement` (3 tests):
+
 - Happy path: exit exitoso — verifica que el claim atómico se ejecuta con los parámetros correctos, que `Stock.findOneAndUpdate` recibe la precondición de cantidad, y que el movimiento queda con `status: 'processed'` y `processedAt` definido
 - Stock insuficiente: verifica que `InsufficientStockError` produce `status: 'failed'` con `failReason` legible en `attempts: 1`, sin consumir el segundo intento — comportamiento correcto de non-retryable
 - Idempotencia: verifica que el guard de `processedAt` impide que el worker llame a `Stock.findOneAndUpdate` dos veces ante un reintento del mismo job
 
 `classifyError` (4 tests):
+
 - `InsufficientStockError` → `'non-retryable'`
 - `CompensationError` → `'non-retryable'`
 - Error genérico → `'retryable'`
