@@ -64,7 +64,7 @@ El approach de desarrollo fue **feature-driven por vertical slices**: cada featu
 
 Los commits fueron planeados antes de escribir código. Cada uno representa un estado funcional del sistema:
 
-```
+```text
 docs: project planning, architecture decisions, and challenge description
 feat: initial Next.js setup + MongoDB connection + env validation
 feat: product and branch models + CRUD routes + zod schemas
@@ -351,6 +351,198 @@ El movimiento falló en el primer intento sin consumir el segundo, porque `Insuf
 
 ---
 
+## Decisión #3 — Polling en cliente cada 5 segundos
+
+### Por qué no WebSockets ni SSE
+
+En Vercel, cada request es stateless: no hay proceso long-running que pueda mantener una conexión abierta entre el servidor y el cliente. WebSockets requieren un servidor con estado persistente (un proceso Node.js dedicado, o un servicio externo como Pusher). SSE tiene mejor soporte en entornos serverless usando Edge Functions con streaming, pero implica cambiar el runtime y configurar headers de keepalive — infraestructura no justificada para este scope.
+
+Polling cada 5s es la elección correcta para este entorno: cero infraestructura adicional, implementable en ~20 líneas, y suficientemente frecuente para que el usuario vea la transición `pending → processed` casi en tiempo real.
+
+### Implementación en `app/(dashboard)/dashboard/page.tsx`
+
+Tres `useEffect` coordinados gestionan la actualización de datos:
+
+**1. Polling de movimientos** — `setInterval` de 5 segundos, deps `[statusFilter, branchFilter]`
+
+El `useEffect` se destruye y recrea automáticamente cuando cambian los filtros, ejecutando `doFetch()` inmediatamente con los parámetros correctos. El flag `cancelled` previene actualizaciones de estado sobre componentes desmontados:
+
+```typescript
+useEffect(() => {
+  let cancelled = false;
+
+  const doFetch = async () => {
+    const params = new URLSearchParams({ limit: "20" });
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (branchFilter !== "all") params.set("branchId", branchFilter);
+
+    try {
+      const res  = await fetch(`/api/movements?${params}`);
+      const data = await res.json();
+      if (!cancelled) {
+        setMovements(data.data ?? []);
+        setMovTotal(data.total ?? 0);
+        setSecondsSince(0);
+        setLoadingMov(false);
+      }
+    } catch {
+      if (!cancelled) setLoadingMov(false);
+    }
+  };
+
+  doFetch();
+  const interval = setInterval(doFetch, 5000);
+  return () => {
+    cancelled = true;
+    clearInterval(interval);
+  };
+}, [statusFilter, branchFilter]);
+```
+
+**2. Contador "Actualizado hace X segundos"** — `setInterval` de 1 segundo, sin deps
+
+Un segundo `useEffect` independiente incrementa `secondsSince` cada segundo. El contador se resetea a `0` dentro de `doFetch` al recibir datos frescos. El reset está automáticamente ligado al cambio de filtros porque el `useEffect` de polling tiene `[statusFilter, branchFilter]` como dependencias: al cambiar un filtro, el efecto se reinicia, `doFetch()` se ejecuta, y el contador vuelve a cero al llegar la respuesta.
+
+```typescript
+useEffect(() => {
+  const interval = setInterval(() => setSecondsSince((s) => s + 1), 1000);
+  return () => clearInterval(interval);
+}, []);
+```
+
+**3. Polling de stock** — `setInterval` de 30 segundos
+
+El stock solo cambia cuando el worker resuelve un movimiento, por lo que 30s es suficiente. Usa `useCallback` para estabilizar la referencia de `fetchStock` y evitar que el `useEffect` dependiente se re-ejecute en cada render:
+
+```typescript
+const fetchStock = useCallback(async () => {
+  try {
+    const res  = await fetch("/api/stock");
+    const data = await res.json();
+    setStockItems(data.data ?? []);
+    setLoadingStock(false);
+  } catch {
+    setLoadingStock(false);
+  }
+}, []);
+
+useEffect(() => {
+  fetchStock();
+  const interval = setInterval(fetchStock, 30000);
+  return () => clearInterval(interval);
+}, [fetchStock]);
+```
+
+### `animate-pulse` para estados intermedios
+
+El badge del estado incluye `animate-pulse` para `pending` y `processing`:
+
+```typescript
+<Badge
+  variant="outline"
+  className={cn(
+    STATUS_CLASS[m.status],
+    (m.status === "pending" || m.status === "processing") && "animate-pulse"
+  )}
+>
+  {STATUS_LABEL[m.status]}
+</Badge>
+```
+
+El procesamiento async introduce un delay visible entre la creación del movimiento y su resolución. Sin un indicador visual, el usuario no puede distinguir "el sistema está trabajando" de "el sistema está roto o el movimiento quedó colgado". El pulso comunica actividad sin necesitar un spinner dedicado ni un mensaje de progreso.
+
+### Con más tiempo
+
+SSE sobre Vercel Edge Functions permitiría notificaciones push en lugar de pull: el servidor enviaría un evento cuando el worker resuelve un movimiento, eliminando el lag del intervalo de 5s y reduciendo requests durante periodos sin actividad. El cliente mantendría una conexión persistente con `EventSource` en lugar de un `setInterval`.
+
+---
+
+## Decisión #5 — Validación con Zod en todas las API routes
+
+### Por qué Zod en el edge, antes de tocar la DB
+
+Las API routes son la frontera del sistema — cualquier dato que llega del cliente puede estar malformado, incompleto, o tener tipos incorrectos. Validar con Zod antes de cualquier operación en DB garantiza que:
+
+- Los errores de tipo (string donde se espera number, campo faltante) se rechazan con 400 antes de llegar a Mongoose
+- El objeto que pasa la validación tiene tipos TypeScript exactos — no hay `any` ni casts manuales en los handlers
+- Los mensajes de error al cliente son descriptivos y provienen de un solo lugar, el schema
+
+### `z.discriminatedUnion` en `CreateMovementSchema`
+
+El movimiento tiene campos condicionales según `type`: `entry` solo necesita `toBranchId`, `exit` solo necesita `fromBranchId`, `transfer` necesita ambos y distintos. Un `z.object` plano con campos opcionales no puede expresar esta dependencia — validaría un `entry` con `fromBranchId` como válido.
+
+`z.discriminatedUnion("type", [...])` resuelve esto: Zod elige la rama correcta basándose en el valor de `type` antes de validar el resto de los campos. La rama `transfer` agrega `.refine()` para la validación cross-field que no es expresable con primitivas de Zod:
+
+```typescript
+// lib/schemas/movement.schema.ts
+export const CreateMovementSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("entry"),
+    productId: objectIdString,
+    toBranchId: objectIdString,        // requerido
+    fromBranchId: z.null().optional(),
+    quantity: z.number().int().min(1, "La cantidad debe ser al menos 1"),
+  }),
+  z.object({
+    type: z.literal("exit"),
+    productId: objectIdString,
+    fromBranchId: objectIdString,      // requerido
+    toBranchId: z.null().optional(),
+    quantity: z.number().int().min(1, "La cantidad debe ser al menos 1"),
+  }),
+  z.object({
+    type: z.literal("transfer"),
+    productId: objectIdString,
+    fromBranchId: objectIdString,      // requerido
+    toBranchId: objectIdString,        // requerido
+    quantity: z.number().int().min(1, "La cantidad debe ser al menos 1"),
+  }).refine(
+    (data) => data.fromBranchId !== data.toBranchId,
+    { message: "fromBranchId y toBranchId deben ser distintos en un transfer" }
+  ),
+]);
+```
+
+### Schemas compartidos entre routes y formulario cliente
+
+Los schemas de `lib/schemas/` se importan directamente en los route handlers:
+
+```typescript
+// app/api/movements/route.ts
+const parsed = CreateMovementSchema.safeParse(body);
+if (!parsed.success) {
+  return NextResponse.json(
+    { error: parsed.error.issues.map((i) => i.message).join(", ") },
+    { status: 400 }
+  );
+}
+```
+
+En el cliente, `MovementForm.tsx` usa `react-hook-form` + `zodResolver` con un schema local plano en lugar del `discriminatedUnion` del servidor. El `discriminatedUnion` en react-hook-form introduce complejidad de tipos en Zod v4 y edge cases en el manejo de errores por rama; la validación condicional se hace manualmente en `onSubmit`, que es más explícita y predecible:
+
+```typescript
+// components/movements/MovementForm.tsx
+const form = useForm<MovementFormData>({
+  resolver: zodResolver(movementFormSchema),
+  defaultValues: { type: "entry", productId: "", fromBranchId: "", toBranchId: "", quantity: 1 },
+});
+```
+
+La validación del servidor sigue siendo la fuente de verdad — el cliente la duplica parcialmente por UX, no por seguridad.
+
+### Trade-off: duplicación parcial con Mongoose
+
+Zod y Mongoose validan los mismos campos desde capas distintas. Si se agrega un campo nuevo, hay que actualizarlo en dos lugares. La duplicación es aceptable porque cada capa aporta algo distinto:
+
+- **Zod**: tipos TypeScript exactos en runtime, mensajes de error user-facing, validación cross-field con `.refine()`
+- **Mongoose**: integridad en DB (índices, tipos BSON, constraint `min: 0` en `quantity` de Stock que previene valores negativos incluso si el worker tiene un bug)
+
+### Con más tiempo: Zod como única fuente de verdad
+
+Con una librería como `zod-to-mongoose` se podrían derivar los schemas Mongoose directamente desde los schemas Zod, eliminando la duplicación mantenida a mano. Alternativamente, elevar las constraints de Mongoose al schema Zod (e.g., `quantity: z.number().min(0)` para Stock) y eliminar las validaciones redundantes del lado de Mongoose, dejando Zod como única fuente de verdad de validación.
+
+---
+
 ## Observabilidad
 
 El worker emite logs estructurados en JSON en cada paso crítico. En Vercel, estos aparecen en la pestaña **Logs** del proyecto y se pueden filtrar por `movementId`.
@@ -395,10 +587,10 @@ Disparado después de persistir `status: "processed"`.
 { "event": "worker.job.done", "movementId": "...", "status": "processed", "durationMs": 35 }
 ```
 
-| Campo | Descripción |
-|---|---|
-| `movementId` | ID del movimiento procesado |
-| `status` | Siempre `"processed"` |
+| Campo        | Descripción                                            |
+| ------------ | ------------------------------------------------------ |
+| `movementId` | ID del movimiento procesado                            |
+| `status`     | Siempre `"processed"`                                  |
 | `durationMs` | Tiempo transcurrido desde el claim hasta la resolución |
 
 ---
@@ -412,12 +604,12 @@ Disparado después de persistir `status: "failed"` (non-retryable o sin intentos
   "attempts": 1, "failReason": "Stock insuficiente para completar el movimiento" }
 ```
 
-| Campo | Descripción |
-|---|---|
-| `movementId` | ID del movimiento |
+| Campo        | Descripción                                                                        |
+| ------------ | ---------------------------------------------------------------------------------- |
+| `movementId` | ID del movimiento                                                                  |
 | `errorClass` | Nombre de la clase del error (`InsufficientStockError`, `MongoNetworkError`, etc.) |
-| `attempts` | Total de intentos consumidos hasta este punto |
-| `failReason` | Mensaje del error — coincide con el campo `failReason` del documento en DB |
+| `attempts`   | Total de intentos consumidos hasta este punto                                      |
+| `failReason` | Mensaje del error — coincide con el campo `failReason` del documento en DB         |
 
 ---
 
@@ -429,15 +621,15 @@ Disparado si la fase 1 del transfer fue aplicada pero tanto la fase 2 como la co
 { "event": "worker.transfer.compensation_failed", "movementId": "..." }
 ```
 
-| Campo | Descripción |
-|---|---|
+| Campo        | Descripción                                                                    |
+| ------------ | ------------------------------------------------------------------------------ |
 | `movementId` | ID del movimiento afectado — usar para localizar y corregir el stock manualmente |
 
 ### Cómo filtrar en Vercel Logs
 
 En la pestaña **Logs** de Vercel, busca por `movementId` para seguir el ciclo de vida completo de un movimiento:
 
-```
+```text
 <movementId>
 ```
 

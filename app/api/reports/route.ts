@@ -37,10 +37,15 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Fechas inválidas" }, { status: 400 });
     }
 
+    // El parámetro "to" llega como "YYYY-MM-DD" → se parsea como medianoche UTC.
+    // Avanzamos al final del día para incluir todos los documentos de esa fecha.
+    const endOfDay = new Date(to);
+    endOfDay.setUTCHours(23, 59, 59, 999);
+
     // Filtro base: rango de fechas + solo movimientos procesados
     const baseMatch: Record<string, unknown> = {
       status:    "processed",
-      createdAt: { $gte: from, $lte: to },
+      createdAt: { $gte: from, $lte: endOfDay },
     };
     if (branchId) {
       baseMatch.$or = [{ fromBranchId: branchId }, { toBranchId: branchId }];
@@ -155,7 +160,7 @@ export async function GET(req: NextRequest) {
       byType,
       byBranch,
       total,
-      dateRange: { from: from.toISOString(), to: to.toISOString() },
+      dateRange: { from: from.toISOString(), to: endOfDay.toISOString() },
     };
 
     return NextResponse.json(response);

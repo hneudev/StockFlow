@@ -73,7 +73,7 @@ export default function ReportsPage() {
   const [branches,     setBranches]     = useState<Branch[]>([]);
   const [branchFilter, setBranchFilter] = useState("all");
   const [from,         setFrom]         = useState(daysAgo(30));
-  const [to,           setTo]           = useState(today());
+  const [to,           setTo]           = useState(() => new Date().toISOString().split("T")[0]);
   const [data,         setData]         = useState<ReportsData | null>(null);
   const [loading,      setLoading]      = useState(false);
   const [error,        setError]        = useState<string | null>(null);
