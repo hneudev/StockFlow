@@ -204,15 +204,28 @@ export default function DashboardClient({
             </SelectContent>
           </Select>
 
-          <span className="text-xs text-muted-foreground ml-auto">
-            {isRefreshing ? "Actualizando..." : `Actualizado hace ${secondsSince}s`}
+          <span className="flex items-center gap-1.5 ml-auto">
+            <span
+              className={cn(
+                "w-1.5 h-1.5 rounded-full shrink-0",
+                isRefreshing
+                  ? "bg-primary animate-pulse"
+                  : "bg-muted-foreground/40"
+              )}
+            />
+            <span className="text-xs text-muted-foreground/60">
+              {`Actualizado hace ${secondsSince}s`}
+            </span>
           </span>
         </div>
 
-        {/* Barra de progreso durante polling — invisible cuando no refresca */}
-        {isRefreshing && (
-          <div className="h-0.5 bg-primary animate-pulse mb-2" />
-        )}
+        {/* Línea de progreso — transición suave de opacidad, se mezcla con el borde */}
+        <div
+          className={cn(
+            "h-px bg-border transition-opacity duration-300",
+            isRefreshing ? "opacity-100" : "opacity-0"
+          )}
+        />
 
         {/* Tabla */}
         <div className="border rounded-md overflow-x-auto flex-1">

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { connectDB } from "@/lib/db";
 import Stock from "@/models/Stock";
+// Side-effect imports — registran los schemas en Mongoose para que .populate() funcione
+import "@/models/Product";
+import "@/models/Branch";
 import { QueryStockSchema } from "@/lib/schemas/stock.schema";
 
 export async function GET(req: NextRequest) {

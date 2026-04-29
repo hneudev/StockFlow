@@ -14,33 +14,31 @@ import DashboardClient from "@/components/dashboard/DashboardClient";
 
 export default async function DashboardPage() {
   let movements: SerializedMovement[] = [];
-  let stock:     SerializedStock[]    = [];
-  let branches:  SerializedBranch[]   = [];
+  let stock: SerializedStock[] = [];
+  let branches: SerializedBranch[] = [];
 
   try {
     await connectDB();
-
     const [movementDocs, stockDocs, branchDocs] = await Promise.all([
       Movement.find({})
         .sort({ createdAt: -1 })
         .limit(20)
-        .populate("productId",    "name sku")
+        .populate("productId", "name sku")
         .populate("fromBranchId", "name")
-        .populate("toBranchId",   "name")
+        .populate("toBranchId", "name")
         .lean(),
       Stock.find({})
         .populate("productId", "name sku")
-        .populate("branchId",  "name")
+        .populate("branchId", "name")
         .lean(),
       Branch.find({}).lean(),
     ]);
-
     movements = movementDocs.map(serializeMovement);
-    stock     = stockDocs.map(serializeStock);
-    branches  = branchDocs.map(serializeBranch);
+    stock = stockDocs.map(serializeStock);
+    branches = branchDocs.map(serializeBranch);
   } catch (error) {
+    // Si falla la DB, el polling del cliente tomará el control
     console.error("Error cargando datos iniciales:", error);
-    // pasar arrays vacíos — el polling del cliente tomará el control
   }
 
   return (
