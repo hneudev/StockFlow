@@ -621,8 +621,8 @@ Disparado si la fase 1 del transfer fue aplicada pero tanto la fase 2 como la co
 { "event": "worker.transfer.compensation_failed", "movementId": "..." }
 ```
 
-| Campo        | Descripción                                                                    |
-| ------------ | ------------------------------------------------------------------------------ |
+| Campo        | Descripción                                                                      |
+| ------------ | -------------------------------------------------------------------------------- |
 | `movementId` | ID del movimiento afectado — usar para localizar y corregir el stock manualmente |
 
 ### Cómo filtrar en Vercel Logs
@@ -648,6 +648,23 @@ Todos los eventos de un mismo movimiento comparten el mismo `movementId`. La sec
 | Thunder Client        | Testing manual de API durante el desarrollo del backend                                                                                                                                                                                   |
 | GitHub                | Control de versiones — commits atómicos y planeados                                                                                                                                                                                       |
 
-**Sobre testing:** Se eligió no hacer TDD dado el tiempo disponible y la velocidad con que el schema evolucionó en las primeras horas. Los tests se escribieron después de que el worker estuvo estable, enfocados en tres casos: happy path, stock insuficiente como error non-retryable, e idempotencia del worker ante invocaciones duplicadas. Estos tres casos cubren el comportamiento más crítico del sistema sin gastar tiempo en cobertura superficial.
+**Sobre testing:** Se eligió no hacer TDD dado el tiempo disponible y la velocidad con que el schema evolucionó en las primeras horas. Los tests se escribieron en `feat/tests` después de que el worker estuvo estable, usando Vitest con mocks de Mongoose — sin conexión a MongoDB real.
+
+Los 7 tests cubren dos grupos:
+
+`processNextMovement` (3 tests):
+- Happy path: exit exitoso — verifica que el claim atómico se ejecuta con los parámetros correctos, que `Stock.findOneAndUpdate` recibe la precondición de cantidad, y que el movimiento queda con `status: 'processed'` y `processedAt` definido
+- Stock insuficiente: verifica que `InsufficientStockError` produce `status: 'failed'` con `failReason` legible en `attempts: 1`, sin consumir el segundo intento — comportamiento correcto de non-retryable
+- Idempotencia: verifica que el guard de `processedAt` impide que el worker llame a `Stock.findOneAndUpdate` dos veces ante un reintento del mismo job
+
+`classifyError` (4 tests):
+- `InsufficientStockError` → `'non-retryable'`
+- `CompensationError` → `'non-retryable'`
+- Error genérico → `'retryable'`
+- `MongoNetworkError` → `'retryable'`
+
+Resultado: 7/7 tests en 25ms.
+
+Estos tres casos cubren el comportamiento más crítico del sistema sin gastar tiempo en cobertura superficial. Con más tiempo: tests de integración del ciclo completo de movimiento contra una DB de test en memoria (`mongodb-memory-server`).
 
 **Sobre navegabilidad del código:** El código está estructurado para ser modificable bajo presión, no solo legible. El worker vive en `lib/worker.ts` completamente separado del route handler. Las funciones tienen nombres que expresan intención (`claimMovement`, `validateAndDeductStock`, `classifyError`, `retryOrFail`). Los comentarios existen donde la lógica no es obvia —especialmente en el pattern de ownership atómico y la compensación de transferencias.
