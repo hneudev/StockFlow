@@ -274,7 +274,7 @@ const result = await Stock.findOneAndUpdate(
 
 ### Worker via Vercel Cron + trigger desde el cliente
 
-En entornos serverless no hay proceso always-on. `setTimeout` tras enviar la respuesta no está garantizado — el proceso muere con la función. Vercel Cron llama al worker cada minuto como mecanismo confiable. El cliente dispara el worker inmediatamente tras crear un movimiento para reducir la latencia percibida.
+En entornos serverless no hay proceso always-on. `setTimeout` tras enviar la respuesta no está garantizado — el proceso muere con la función. El Vercel Cron (plan Hobby — una vez al día) actúa como safety net para movimientos que no fueron procesados. El cliente dispara el worker inmediatamente tras crear un movimiento para reducir la latencia percibida.
 
 El `WORKER_SECRET` vive únicamente en variables de entorno del servidor. El trigger del cliente va a `/api/worker/trigger`, una ruta interna de Next.js que tiene acceso al secret del servidor y llama al worker directamente — el token nunca se expone al navegador.
 

@@ -10,7 +10,7 @@ Tres decisiones definen la arquitectura de este sistema:
 2. **Worker con claim atómico `pending → processing`** — garantiza single-consumer aunque Vercel Cron dispare invocaciones solapadas; los errores se clasifican como `retryable` o `non-retryable` para no gastar intentos en fallos definitivos.
 3. **Polling en cliente cada 5s** — decisión honesta para el entorno serverless donde WebSockets y SSE requieren infraestructura adicional no justificada en este scope.
 
----
+---\*\*\*\*
 
 ## Cómo abordé el problema
 
@@ -45,7 +45,7 @@ El approach de desarrollo fue **feature-driven por vertical slices**: cada featu
 
 **Nota sobre el worker:** El endpoint del worker usa `POST`, no `GET`. Un `GET` con side-effects viola la semántica HTTP — los GETs deben ser seguros e idempotentes. El worker modifica estado (toma ownership de jobs, actualiza stocks), por lo que `POST` es el método correcto. El endpoint está protegido con `Authorization: Bearer $WORKER_SECRET` verificado en el handler; el secret vive únicamente en variables de entorno del servidor, nunca en el cliente.
 
-**Nota sobre el trigger manual desde el frontend:** El frontend puede disparar el worker inmediatamente al crear un movimiento (para no esperar el cron). Este trigger va a través de un endpoint separado `/api/worker/trigger` — una ruta interna de Next.js que tiene acceso al secret del servidor y llama al worker directamente, sin exponer el token al navegador.
+**Nota sobre el trigger manual desde el frontend:** El frontend puede disparar el worker inmediatamente al crear un movimiento (para no esperar el cron). Este trigger va a través de un endpoint separado `/api/worker/trigger` — una ruta interna de Next.js que tiene acceso al secret del servidor y llama al worker directamente, sin exponer el token al navegador.El worker se dispara desde el cliente inmediatamente al crear un movimiento vía POST /api/worker/trigger. El Vercel Cron (plan Hobby — una vez al día) actúa como safety net para movimientos que no fueron procesados. Esta separación entre trigger de UX y cleanup periódico es más robusta que depender únicamente del cron: el sistema procesa en segundos en condiciones normales y no depende de la frecuencia del scheduler.
 
 ### Qué prioricé primero
 
