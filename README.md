@@ -2,7 +2,7 @@
 
 Sistema de control de inventario multi-sucursal con procesamiento asíncrono de movimientos.
 
-**Demo en vivo:** _[URL disponible tras el deploy]_
+**Demo en vivo:** https://stockflow-hneudev.vercel.app
 
 ---
 
