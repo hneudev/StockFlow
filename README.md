@@ -69,7 +69,9 @@ Abrir [http://localhost:3000](http://localhost:3000).
 npm run seed
 ```
 
-Crea productos, sucursales y entradas de stock de ejemplo para explorar el dashboard sin configuración manual.
+Limpia las colecciones existentes e inserta datos de demostración: 3 productos, 3 sucursales, stock en todas las combinaciones y 10 movimientos en distintos estados (processed, failed, pending) para explorar el dashboard desde el primer arranque.
+
+> ⚠️ Este comando elimina todos los datos existentes antes de insertar.
 
 ---
 
@@ -290,6 +292,10 @@ El sistema está diseñado para ser modificable con cambios localizados:
 ### Polling en lugar de WebSockets
 
 Las serverless functions terminan al enviar la respuesta y no pueden mantener conexiones persistentes. WebSockets requeriría un servicio externo (Pusher, Ably). Polling cada 5 segundos es la decisión honesta para este entorno: predecible, sin dependencias adicionales, suficiente para un dashboard interno.
+
+### Nota sobre cold start en Vercel Hobby
+
+El plan Hobby suspende las funciones serverless tras períodos de inactividad. El primer request puede tardar 10-20 segundos mientras la función se reinicia y establece la conexión a MongoDB. Los requests subsiguientes responden en menos de 200ms. El dashboard mitiga esto con Server Components — los datos viajan en el HTML inicial, por lo que el usuario ve contenido real incluso durante el cold start, aunque con algo de latencia en el primer render.
 
 ---
 
