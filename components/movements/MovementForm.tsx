@@ -94,14 +94,25 @@ export default function MovementForm({ onSuccess }: Props) {
     if (type === "exit")   form.setValue("toBranchId",   "");
   }, [type, form]);
 
+  const handleOpenChange = (val: boolean) => {
+    if (!val) form.reset();
+    setOpen(val);
+  };
+
+  const onInvalid = () => {
+    toast.warning("Completa todos los campos requeridos antes de continuar");
+  };
+
   const onSubmit = async (data: MovementFormData) => {
     // Validación adicional de campos condicionales
     if ((data.type === "exit" || data.type === "transfer") && !data.fromBranchId) {
       form.setError("fromBranchId", { message: "Sucursal origen requerida" });
+      toast.warning("Completa todos los campos requeridos antes de continuar");
       return;
     }
     if ((data.type === "entry" || data.type === "transfer") && !data.toBranchId) {
       form.setError("toBranchId", { message: "Sucursal destino requerida" });
+      toast.warning("Completa todos los campos requeridos antes de continuar");
       return;
     }
     if (
@@ -109,6 +120,7 @@ export default function MovementForm({ onSuccess }: Props) {
       data.fromBranchId === data.toBranchId
     ) {
       form.setError("toBranchId", { message: "Origen y destino deben ser distintos" });
+      toast.warning("Origen y destino no pueden ser la misma sucursal");
       return;
     }
 
@@ -139,7 +151,9 @@ export default function MovementForm({ onSuccess }: Props) {
         return;
       }
 
-      toast.success("Movimiento creado — procesando...");
+      toast.success("Movimiento registrado correctamente", {
+        description: "El movimiento está siendo procesado.",
+      });
       form.reset();
       setOpen(false);
       onSuccess?.();
@@ -151,7 +165,7 @@ export default function MovementForm({ onSuccess }: Props) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild>
         <Button size="sm">
           <Plus className="h-4 w-4 mr-1" />
@@ -165,7 +179,7 @@ export default function MovementForm({ onSuccess }: Props) {
         </DialogHeader>
 
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+          <form onSubmit={form.handleSubmit(onSubmit, onInvalid)} className="space-y-4">
 
             {/* Tipo */}
             <FormField
@@ -288,9 +302,13 @@ export default function MovementForm({ onSuccess }: Props) {
                       type="number"
                       min={1}
                       {...field}
-                      onChange={(e) =>
-                        field.onChange(e.target.valueAsNumber || 1)
-                      }
+                      onKeyDown={(e) => {
+                        if (["e", "E", "+", "-", "."].includes(e.key)) e.preventDefault();
+                      }}
+                      onChange={(e) => {
+                        const val = e.target.valueAsNumber;
+                        field.onChange(Number.isNaN(val) ? "" : val);
+                      }}
                     />
                   </FormControl>
                   <FormMessage />
@@ -302,7 +320,7 @@ export default function MovementForm({ onSuccess }: Props) {
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setOpen(false)}
+                onClick={() => handleOpenChange(false)}
               >
                 Cancelar
               </Button>
