@@ -281,8 +281,8 @@ export default function ProductsPage() {
         <ProductFormDialog onSuccess={fetchProducts} />
       </div>
 
-      <div className="border rounded-md overflow-auto">
-        <Table>
+      <div className="border rounded-md overflow-x-auto">
+        <Table className="min-w-[600px]">
           <TableHeader>
             <TableRow>
               <TableHead>SKU</TableHead>

@@ -156,10 +156,10 @@ export default function DashboardPage() {
   }, {});
 
   return (
-    <div className="flex gap-6 h-full min-h-0">
+    <div className="grid grid-cols-1 md:grid-cols-[3fr_2fr] gap-6 h-full min-h-0">
 
       {/* ── Panel izquierdo: movimientos (60%) ────────────────────────── */}
-      <section className="flex-[3] flex flex-col gap-4 min-w-0">
+      <section className="flex flex-col gap-4 min-w-0">
         <div className="flex items-start justify-between gap-2">
           <div>
             <h2 className="text-xl font-semibold">Movimientos recientes</h2>
@@ -207,8 +207,8 @@ export default function DashboardPage() {
         </div>
 
         {/* Tabla */}
-        <div className="border rounded-md overflow-auto flex-1">
-          <Table>
+        <div className="border rounded-md overflow-x-auto flex-1">
+          <Table className="min-w-[600px]">
             <TableHeader>
               <TableRow>
                 <TableHead>Producto</TableHead>
@@ -269,7 +269,7 @@ export default function DashboardPage() {
       </section>
 
       {/* ── Panel derecho: stock (40%) ─────────────────────────────────── */}
-      <section className="flex-[2] flex flex-col gap-4 min-w-0">
+      <section className="flex flex-col gap-4 min-w-0">
         <h2 className="text-xl font-semibold">Stock actual</h2>
 
         {loadingStock ? (

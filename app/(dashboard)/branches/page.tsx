@@ -235,8 +235,8 @@ export default function BranchesPage() {
         <BranchFormDialog onSuccess={fetchBranches} />
       </div>
 
-      <div className="border rounded-md overflow-auto">
-        <Table>
+      <div className="border rounded-md overflow-x-auto">
+        <Table className="min-w-[600px]">
           <TableHeader>
             <TableRow>
               <TableHead>Nombre</TableHead>
