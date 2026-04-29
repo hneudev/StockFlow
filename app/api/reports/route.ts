@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import mongoose from "mongoose";
 import { connectDB } from "@/lib/db";
 import Movement from "@/models/Movement";
 
@@ -48,7 +49,8 @@ export async function GET(req: NextRequest) {
       createdAt: { $gte: from, $lte: endOfDay },
     };
     if (branchId) {
-      baseMatch.$or = [{ fromBranchId: branchId }, { toBranchId: branchId }];
+      const branchOid = new mongoose.Types.ObjectId(branchId);
+      baseMatch.$or = [{ fromBranchId: branchOid }, { toBranchId: branchOid }];
     }
 
     // Conteo total
