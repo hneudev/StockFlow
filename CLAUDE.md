@@ -104,3 +104,8 @@ NEXT_PUBLIC_APP_URL  # URL base — disponible en cliente
 - No poner lógica de negocio en los route handlers — va en `lib/worker.ts` o helpers
 - No exponer `WORKER_SECRET` al cliente — usar `/api/worker/trigger` como intermediario
 - No commitear `.env.local`
+
+## URLs importantes
+
+- Local: http://localhost:3000
+- Producción: https://stockflow-hneudev.vercel.app
