@@ -246,8 +246,8 @@ export default function MovementsPage() {
       </div>
 
       {/* Tabla */}
-      <div className="border rounded-md overflow-auto flex-1">
-        <Table>
+      <div className="border rounded-md overflow-x-auto flex-1">
+        <Table className="min-w-[600px]">
           <TableHeader>
             <TableRow>
               <TableHead>Producto</TableHead>
